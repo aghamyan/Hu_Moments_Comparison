@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -38,6 +39,7 @@ import java.util.List;
 public class HuMomentGuiComparator extends JFrame {
 
     private static final int REQUIRED_HU_COLUMNS = 7;
+    private static final int MAX_COLUMNS = 400;
     private static final DecimalFormat DISTANCE_FORMAT = new DecimalFormat("0.#####E0");
 
     private final JTextField queryField = new JTextField();
@@ -193,6 +195,7 @@ public class HuMomentGuiComparator extends JFrame {
                 double bestDistance = Double.POSITIVE_INFINITY;
                 ReferenceOutcome bestOutcome = null;
 
+                List<Path> filteredReferences = new ArrayList<>();
                 for (Path reference : referenceFiles) {
                     HuFileData referenceData = readHuData(reference);
                     int rowsCompared = Math.min(queryData.rows().size(), referenceData.rows().size());
