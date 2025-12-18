@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -192,9 +193,7 @@ public class HuMomentGuiComparator extends JFrame {
                 StringBuilder builder = new StringBuilder();
                 builder.append("Query file: ").append(queryFile.getFileName()).append('\n');
                 builder.append("References: ").append(referenceFiles.size()).append(" file(s)\n\n");
-
-                double bestDistance = Double.POSITIVE_INFINITY;
-                Path bestPath = null;
+                List<ReferenceResult> results = new ArrayList<>();
 
                 for (Path reference : referenceFiles) {
                     List<double[]> referenceRows = readHuVectors(reference);
@@ -206,11 +205,7 @@ public class HuMomentGuiComparator extends JFrame {
                     }
 
                     double averageDistance = computeAverageDistance(queryRows, referenceRows, rowsCompared);
-                    boolean isBest = averageDistance < bestDistance;
-                    if (isBest) {
-                        bestDistance = averageDistance;
-                        bestPath = reference;
-                    }
+                    results.add(new ReferenceResult(reference, averageDistance, rowsCompared));
 
                     builder.append(reference.getFileName())
                             .append(" - rows compared: ")
@@ -220,12 +215,17 @@ public class HuMomentGuiComparator extends JFrame {
                             .append('\n');
                 }
 
-                if (bestPath != null) {
+                ReferenceResult best = results.stream()
+                        .filter(r -> Double.isFinite(r.averageDistance()))
+                        .min(Comparator.comparingDouble(ReferenceResult::averageDistance))
+                        .orElse(null);
+
+                if (best != null) {
                     builder.append('\n')
                             .append("Closest match: ")
-                            .append(bestPath.getFileName())
+                            .append(best.path().getFileName())
                             .append(" (average distance ")
-                            .append(formatDistance(bestDistance))
+                            .append(formatDistance(best.averageDistance()))
                             .append(")");
                 } else {
                     builder.append("No valid reference comparisons were completed.");
@@ -344,6 +344,8 @@ public class HuMomentGuiComparator extends JFrame {
         }
         return DISTANCE_FORMAT.format(distance);
     }
+
+    private record ReferenceResult(Path path, double averageDistance, int rowsCompared) { }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
