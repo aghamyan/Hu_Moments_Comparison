@@ -249,12 +249,13 @@ public class HuMomentGuiComparator extends JFrame {
     }
 
     private double euclideanDistance(double[] query, double[] reference) {
-        double sum = 0.0;
+        double norm = 0.0;
         for (int i = 0; i < REQUIRED_HU_COLUMNS; i++) {
             double delta = query[i] - reference[i];
-            sum += delta * delta;
+            // Use hypot to avoid underflow when Hu values are extremely small.
+            norm = Math.hypot(norm, delta);
         }
-        return Math.sqrt(sum);
+        return norm;
     }
 
     private HuFileData readHuData(Path path) throws IOException {
