@@ -193,9 +193,17 @@ public class HuMomentGuiComparator extends JFrame {
                 StringBuilder builder = new StringBuilder();
                 builder.append("Query file: ").append(queryFile.getFileName()).append('\n');
                 builder.append("References: ").append(referenceFiles.size()).append(" file(s)\n\n");
+                List<Path> filteredReferences = referenceFiles.stream()
+                        .filter(path -> !path.equals(queryFile))
+                        .toList();
+
+                if (filteredReferences.isEmpty()) {
+                    return "No reference files to compare (query file was excluded).";
+                }
+
                 List<ReferenceResult> results = new ArrayList<>();
 
-                for (Path reference : referenceFiles) {
+                for (Path reference : filteredReferences) {
                     List<double[]> referenceRows = readHuVectors(reference);
                     int rowsCompared = Math.min(queryRows.size(), referenceRows.size());
                     if (rowsCompared == 0) {
