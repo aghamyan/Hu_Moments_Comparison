@@ -39,6 +39,7 @@ import java.util.List;
 public class HuMomentGuiComparator extends JFrame {
 
     private static final int REQUIRED_HU_COLUMNS = 7;
+    private static final int MAX_COLUMNS = 400;
     private static final DecimalFormat DISTANCE_FORMAT = new DecimalFormat("0.#####E0");
 
     private final JTextField queryField = new JTextField();
@@ -285,8 +286,8 @@ public class HuMomentGuiComparator extends JFrame {
                 throw new IOException("File \"" + path + "\" is empty.");
             }
 
-            String[] headers = splitCsvLine(headerLine);
-            int[] huIndexes = locateHuColumns(headers);
+                String[] headers = splitCsvLine(headerLine);
+                int[] huIndexes = locateHuColumns(headers);
 
             String line;
             int lineNumber = 1;
@@ -346,8 +347,12 @@ public class HuMomentGuiComparator extends JFrame {
         return indexes;
     }
 
-    private String[] splitCsvLine(String line) {
-        return line.split(",", -1);
+    private String[] splitCsvLine(String line) throws IOException {
+        String[] parts = line.split(",", -1);
+        if (parts.length > MAX_COLUMNS) {
+            throw new IOException("CSV row exceeds the maximum supported column count of " + MAX_COLUMNS + ".");
+        }
+        return parts;
     }
 
     private String formatDistance(double distance) {
