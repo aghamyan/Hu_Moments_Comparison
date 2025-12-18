@@ -186,65 +186,44 @@ public class HuMomentGuiComparator extends JFrame {
         SwingWorker<String, Void> worker = new SwingWorker<>() {
             @Override
             protected String doInBackground() throws Exception {
-                List<double[]> queryRows = readHuVectors(queryFile);
-                if (queryRows.isEmpty()) {
+                HuFileData queryData = readHuData(queryFile);
+                if (queryData.rows().isEmpty()) {
                     return "Query file contains no rows with Hu1–Hu7 values.";
                 }
 
-                StringBuilder builder = new StringBuilder();
-                builder.append("Query file: ").append(queryFile.getFileName()).append('\n');
+                List<ReferenceOutcome> outcomes = new ArrayList<>();
+                double bestDistance = Double.POSITIVE_INFINITY;
+                ReferenceOutcome bestOutcome = null;
 
                 List<Path> filteredReferences = new ArrayList<>();
                 for (Path reference : referenceFiles) {
-                    if (!isSameFile(reference, queryFile)) {
-                        filteredReferences.add(reference);
+                    HuFileData referenceData = readHuData(reference);
+                    int rowsCompared = Math.min(queryData.rows().size(), referenceData.rows().size());
+                    Double averageDistance = rowsCompared > 0
+                            ? computeAverageDistance(queryData.rows(), referenceData.rows(), rowsCompared)
+                            : null;
+
+                    boolean huMomentsOk = rowsCompared > 0 && queryData.hasHuColumns() && referenceData.hasHuColumns();
+                    String segmentationStatus = segmentationStatus(queryData.rows().size(), rowsCompared);
+
+                    ReferenceOutcome outcome = new ReferenceOutcome(
+                            reference,
+                            rowsCompared,
+                            averageDistance,
+                            segmentationStatus,
+                            huMomentsOk
+                    );
+                    outcomes.add(outcome);
+
+                    if (averageDistance != null && averageDistance < bestDistance) {
+                        bestDistance = averageDistance;
+                        bestOutcome = outcome;
                     }
                 }
-                builder.append("References: ").append(filteredReferences.size()).append(" file(s)\n\n");
 
-                if (filteredReferences.isEmpty()) {
-                    return "No reference files to compare (query file was excluded).";
-                }
+                finalizeOutcomes(outcomes, bestOutcome);
 
-                List<ReferenceResult> results = new ArrayList<>();
-
-                for (Path reference : filteredReferences) {
-                    List<double[]> referenceRows = readHuVectors(reference);
-                    int rowsCompared = Math.min(queryRows.size(), referenceRows.size());
-                    if (rowsCompared == 0) {
-                        builder.append(reference.getFileName())
-                                .append(" - no overlapping rows to compare.\n");
-                        continue;
-                    }
-
-                    double averageDistance = computeAverageDistance(queryRows, referenceRows, rowsCompared);
-                    results.add(new ReferenceResult(reference, averageDistance, rowsCompared));
-
-                    builder.append(reference.getFileName())
-                            .append(" - rows compared: ")
-                            .append(rowsCompared)
-                            .append(", average distance: ")
-                            .append(formatDistance(averageDistance))
-                            .append('\n');
-                }
-
-                ReferenceResult best = results.stream()
-                        .filter(r -> Double.isFinite(r.averageDistance()))
-                        .min(Comparator.comparingDouble(ReferenceResult::averageDistance))
-                        .orElse(null);
-
-                if (best != null) {
-                    builder.append('\n')
-                            .append("Closest match: ")
-                            .append(best.path().getFileName())
-                            .append(" (average distance ")
-                            .append(formatDistance(best.averageDistance()))
-                            .append(")");
-                } else {
-                    builder.append("No valid reference comparisons were completed.");
-                }
-
-                return builder.toString();
+                return buildSummaryOutput(outcomes);
             }
 
             @Override
@@ -278,46 +257,57 @@ public class HuMomentGuiComparator extends JFrame {
         return Math.sqrt(sum);
     }
 
-    private List<double[]> readHuVectors(Path path) throws IOException {
+    private HuFileData readHuData(Path path) throws IOException {
         List<double[]> rows = new ArrayList<>();
+        boolean hasHuColumns = false;
+        int[] huIndexes = null;
+
         try (BufferedReader reader = Files.newBufferedReader(path)) {
             String headerLine = reader.readLine();
             if (headerLine == null) {
                 throw new IOException("File \"" + path + "\" is empty.");
             }
 
-                String[] headers = splitCsvLine(headerLine);
-                int[] huIndexes = locateHuColumns(headers);
+            String[] headers = splitCsvLine(headerLine);
+            huIndexes = locateHuColumns(headers);
+            hasHuColumns = huIndexes != null;
 
             String line;
-            int lineNumber = 1;
             while ((line = reader.readLine()) != null) {
-                lineNumber++;
                 if (line.trim().isEmpty()) {
                     continue;
                 }
 
                 String[] cells = splitCsvLine(line);
+                if (!hasHuColumns) {
+                    continue;
+                }
 
                 double[] huValues = new double[REQUIRED_HU_COLUMNS];
+                boolean rowValid = true;
                 for (int i = 0; i < REQUIRED_HU_COLUMNS; i++) {
                     int columnIndex = huIndexes[i];
-                    if (columnIndex >= cells.length) {
-                        throw new IOException("Row " + lineNumber + " in \"" + path + "\" is missing Hu column at index " + columnIndex + ".");
+                    if (columnIndex < 0 || columnIndex >= cells.length) {
+                        rowValid = false;
+                        break;
                     }
                     try {
                         huValues[i] = Double.parseDouble(cells[columnIndex]);
                     } catch (NumberFormatException ex) {
-                        throw new IOException("Invalid number in row " + lineNumber + " (column " + headers[columnIndex] + ") of \"" + path + "\": " + cells[columnIndex]);
+                        rowValid = false;
+                        break;
                     }
                 }
-                rows.add(huValues);
+
+                if (rowValid) {
+                    rows.add(huValues);
+                }
             }
         }
-        return rows;
+        return new HuFileData(List.copyOf(rows), hasHuColumns);
     }
 
-    private int[] locateHuColumns(String[] headers) throws IOException {
+    private int[] locateHuColumns(String[] headers) {
         int[] indexes = new int[REQUIRED_HU_COLUMNS];
         for (int i = 0; i < REQUIRED_HU_COLUMNS; i++) {
             indexes[i] = -1;
@@ -341,18 +331,109 @@ public class HuMomentGuiComparator extends JFrame {
 
         for (int index : indexes) {
             if (index < 0) {
-                throw new IOException("CSV file is missing one or more Hu columns (Hu1-Hu7).");
+                return null;
             }
         }
         return indexes;
     }
 
-    private String[] splitCsvLine(String line) throws IOException {
-        String[] parts = line.split(",", -1);
-        if (parts.length > MAX_COLUMNS) {
-            throw new IOException("CSV row exceeds the maximum supported column count of " + MAX_COLUMNS + ".");
+    private String buildSummaryOutput(List<ReferenceOutcome> outcomes) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("Hu-moment comparison success summary (lower average distance = closer match)\n\n");
+        builder.append(renderSummaryTable(outcomes));
+        return builder.toString();
+    }
+
+    private String renderSummaryTable(List<ReferenceOutcome> outcomes) {
+        String[][] rows = new String[outcomes.size() + 1][6];
+        rows[0] = new String[]{
+                "Reference CSV",
+                "Average Hu distance",
+                "Closest Match",
+                "Segmentation OK",
+                "Hu Moments OK",
+                "Overall Result"
+        };
+
+        for (int i = 0; i < outcomes.size(); i++) {
+            ReferenceOutcome outcome = outcomes.get(i);
+            rows[i + 1] = new String[]{
+                    outcome.reference().getFileName().toString(),
+                    outcome.averageDistanceText(),
+                    outcome.closestMatch() ? "Yes" : "No",
+                    outcome.segmentationStatus(),
+                    outcome.huMomentsOk() ? "Yes" : "No",
+                    outcome.overallResult()
+            };
         }
-        return parts;
+
+        int[] widths = new int[rows[0].length];
+        for (String[] row : rows) {
+            for (int i = 0; i < row.length; i++) {
+                widths[i] = Math.max(widths[i], row[i].length());
+            }
+        }
+
+        StringBuilder table = new StringBuilder();
+        String border = buildBorder(widths);
+        table.append(border);
+        table.append(formatRow(rows[0], widths));
+        table.append(border);
+        for (int i = 1; i < rows.length; i++) {
+            table.append(formatRow(rows[i], widths));
+        }
+        table.append(border);
+        return table.toString();
+    }
+
+    private String buildBorder(int[] widths) {
+        StringBuilder builder = new StringBuilder();
+        builder.append('+');
+        for (int width : widths) {
+            builder.append("-").append("-".repeat(width)).append('-').append('+');
+        }
+        builder.append('\n');
+        return builder.toString();
+    }
+
+    private String formatRow(String[] row, int[] widths) {
+        StringBuilder builder = new StringBuilder();
+        builder.append('|');
+        for (int i = 0; i < row.length; i++) {
+            builder.append(' ').append(padRight(row[i], widths[i])).append(' ').append('|');
+        }
+        builder.append('\n');
+        return builder.toString();
+    }
+
+    private String padRight(String value, int width) {
+        if (value.length() >= width) {
+            return value;
+        }
+        return value + " ".repeat(width - value.length());
+    }
+
+    private String segmentationStatus(int queryRows, int rowsCompared) {
+        if (rowsCompared == 0) {
+            return "No";
+        }
+        if (rowsCompared == queryRows) {
+            return "Yes";
+        }
+        return "Partial";
+    }
+
+    private void finalizeOutcomes(List<ReferenceOutcome> outcomes, ReferenceOutcome bestOutcome) {
+        for (ReferenceOutcome outcome : outcomes) {
+            boolean isClosest = outcome == bestOutcome;
+            outcome.setClosestMatch(isClosest);
+            boolean success = isClosest && !"No".equals(outcome.segmentationStatus()) && outcome.huMomentsOk();
+            outcome.setOverallResult(success ? "Success" : "Failure");
+        }
+    }
+
+    private String[] splitCsvLine(String line) {
+        return line.split(",", -1);
     }
 
     private String formatDistance(double distance) {
@@ -362,16 +443,61 @@ public class HuMomentGuiComparator extends JFrame {
         return DISTANCE_FORMAT.format(distance);
     }
 
-    private boolean isSameFile(Path first, Path second) {
-        try {
-            return Files.isSameFile(first, second);
-        } catch (IOException ex) {
-            // Fall back to equality if normalization fails.
-            return first.equals(second);
-        }
+    private record HuFileData(List<double[]> rows, boolean hasHuColumns) {
     }
 
-    private record ReferenceResult(Path path, double averageDistance, int rowsCompared) { }
+    private class ReferenceOutcome {
+        private final Path reference;
+        private final int rowsCompared;
+        private final Double averageDistance;
+        private final String segmentationStatus;
+        private final boolean huMomentsOk;
+        private boolean closestMatch;
+        private String overallResult = "Failure";
+
+        ReferenceOutcome(Path reference, int rowsCompared, Double averageDistance, String segmentationStatus, boolean huMomentsOk) {
+            this.reference = reference;
+            this.rowsCompared = rowsCompared;
+            this.averageDistance = averageDistance;
+            this.segmentationStatus = segmentationStatus;
+            this.huMomentsOk = huMomentsOk;
+        }
+
+        Path reference() {
+            return reference;
+        }
+
+        String segmentationStatus() {
+            return segmentationStatus;
+        }
+
+        boolean huMomentsOk() {
+            return huMomentsOk;
+        }
+
+        boolean closestMatch() {
+            return closestMatch;
+        }
+
+        void setClosestMatch(boolean closestMatch) {
+            this.closestMatch = closestMatch;
+        }
+
+        String overallResult() {
+            return overallResult;
+        }
+
+        void setOverallResult(String overallResult) {
+            this.overallResult = overallResult;
+        }
+
+        String averageDistanceText() {
+            if (averageDistance == null) {
+                return "-";
+            }
+            return formatDistance(averageDistance);
+        }
+    }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
