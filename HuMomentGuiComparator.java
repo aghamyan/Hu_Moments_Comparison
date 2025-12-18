@@ -192,10 +192,14 @@ public class HuMomentGuiComparator extends JFrame {
 
                 StringBuilder builder = new StringBuilder();
                 builder.append("Query file: ").append(queryFile.getFileName()).append('\n');
-                builder.append("References: ").append(referenceFiles.size()).append(" file(s)\n\n");
-                List<Path> filteredReferences = referenceFiles.stream()
-                        .filter(path -> !path.equals(queryFile))
-                        .toList();
+
+                List<Path> filteredReferences = new ArrayList<>();
+                for (Path reference : referenceFiles) {
+                    if (!isSameFile(reference, queryFile)) {
+                        filteredReferences.add(reference);
+                    }
+                }
+                builder.append("References: ").append(filteredReferences.size()).append(" file(s)\n\n");
 
                 if (filteredReferences.isEmpty()) {
                     return "No reference files to compare (query file was excluded).";
@@ -351,6 +355,15 @@ public class HuMomentGuiComparator extends JFrame {
             return String.valueOf(distance);
         }
         return DISTANCE_FORMAT.format(distance);
+    }
+
+    private boolean isSameFile(Path first, Path second) {
+        try {
+            return Files.isSameFile(first, second);
+        } catch (IOException ex) {
+            // Fall back to equality if normalization fails.
+            return first.equals(second);
+        }
     }
 
     private record ReferenceResult(Path path, double averageDistance, int rowsCompared) { }
